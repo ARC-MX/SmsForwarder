@@ -62,8 +62,8 @@ class SmsReceiver : BroadcastReceiver() {
                 // 整条消息解析失败、短信无法转发。这里改为逐条 PDU 解析并单独 try-catch，
                 // 单条解析失败不影响其它分段，避免整条短信被丢弃。
                 val format = intent.getStringExtra("format")
-                val pdus = intent.getSerializableExtra("pdus") as? Array<*>
-                    ?: intent.getSerializableExtra("messages") as? Array<*>
+                val pdus = intent.extras?.get("pdus") as? Array<*>
+                    ?: intent.extras?.get("messages") as? Array<*>
                 if (pdus != null) {
                     for (pdu in pdus) {
                         try {

@@ -33,28 +33,49 @@ jobs:
             -keypass test123456 \
             -dname "CN=Test, OU=Test, O=Test, L=Test, ST=Test, C=CN"
           printf "storeFile=$(pwd)/keystore/test.jks\nkeyAlias=testkey\nkeyPassword=test123456\nstorePassword=test123456\n" > keystore/keystore.properties
-          cat keystore/keystore.properties
 
-      # runner 预装的 SDK 只有 android-34+，本项目 compileSdk=33 且 buildToolsVersion=33.0.1，
-      # 用官方 action 补齐 cmdline-tools 与所需组件（它会自动接受许可并加入 PATH）。
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v4.0.4
-        with:
-          packages: 'platform-tools platforms;android-33 build-tools;33.0.1'
-          accept-android-sdk-licenses: true
-
-      # 打印已安装组件，便于确认 android-33 / 33.0.1 就位
-      - name: Verify Android SDK components
+      # 尽力安装 android-33 / build-tools 33.0.1（本项目 compileSdk=33）。
+      # 失败也不阻塞构建：AGP 自身会在构建时补装缺失的 SDK 组件。
+      - name: Install Android SDK components (best effort)
+        continue-on-error: true
         run: |
-          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
-          sdkmanager --list_installed 2>&1 | grep -E "platforms;android-33|build-tools;33.0.1" || echo "!! 未找到 android-33 / 33.0.1"
+          set +e
+          SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT ANDROID_HOME=$ANDROID_HOME"
+          echo "SDK dir: $SDK"
+          ls -la "$SDK" || true
+          SDKMGR=$(find "$SDK" -name sdkmanager -type f 2>/dev/null | head -1)
+          echo "sdkmanager=$SDKMGR"
+          if [ -n "$SDKMGR" ]; then
+            yes | "$SDKMGR" --licenses >/dev/null 2>&1 || true
+            "$SDKMGR" --install "platforms;android-33" "build-tools;33.0.1" 2>&1 | tail -20
+            "$SDKMGR" --list_installed 2>&1 | grep -E "android-33|33\.0\.1" || echo "!! android-33 / 33.0.1 未安装成功"
+          else
+            echo "!! 未找到 sdkmanager"
+          fi
 
-      # 编 debug 包（debuggable，方便用 logcat 抓日志；isNeedPackage=true 时 debug 也会走 release 签名配置）
+      # 编译。失败时把关键错误行转成 annotation 输出：
+      # public 仓库可通过 check-runs annotations API 免登录读取，便于远程定位问题。
       - name: Build debug APK
-        run: bash ./gradlew assembleDebug --no-daemon --stacktrace
+        run: |
+          set +e
+          bash ./gradlew assembleDebug --no-daemon --stacktrace > /tmp/build.log 2>&1
+          code=$?
+          echo "gradle_exit=$code"
+          echo "=========== 关键错误行 ==========="
+          grep -nE "^e: |error:|FAILURE:|What went wrong|Could not (resolve|find|determine|download|install)|Caused by|> Task .* FAILED|Execution failed|Failed to install|SDK " /tmp/build.log | head -30
+          echo "=========== 日志末尾 ==========="
+          tail -50 /tmp/build.log
+          grep -E "^e: |error:|FAILURE:|What went wrong|Could not (resolve|find|determine|download|install)|Caused by|> Task .* FAILED|Execution failed|Failed to install" /tmp/build.log \
+            | head -25 \
+            | while IFS= read -r l; do
+                echo "::error title=gradle::$(printf '%s' "$l" | cut -c1-800)"
+              done
+          exit $code
 
       # 上传 universal 和 arm64-v8a 两种，真机安装二选一即可
       - name: Upload APK
+        if: hashFiles('build/app/outputs/apk/debug/*.apk') != ''
         uses: actions/upload-artifact@v4
         with:
           name: SmsForwarder-test
