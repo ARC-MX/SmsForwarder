@@ -35,9 +35,21 @@ jobs:
           printf "storeFile=$(pwd)/keystore/test.jks\nkeyAlias=testkey\nkeyPassword=test123456\nstorePassword=test123456\n" > keystore/keystore.properties
           cat keystore/keystore.properties
 
+      # runner 预装的 SDK 只有 android-34+，本项目需要 android-33 和 build-tools 33.0.1，
+      # 这里用 sdkmanager 补齐（先接受许可，再安装缺失组件）。
+      - name: Install Android SDK components
+        run: |
+          SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER=$(find "${ANDROID_SDK_ROOT}/cmdline-tools" -name sdkmanager -type f 2>/dev/null | sort | tail -1)
+          fi
+          echo "sdkmanager = $SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-33" "build-tools;33.0.1"
+
       # 编 debug 包（debuggable，方便用 logcat 抓日志；isNeedPackage=true 时 debug 也会走 release 签名配置）
       - name: Build debug APK
-        run: bash ./gradlew assembleDebug --no-daemon
+        run: bash ./gradlew assembleDebug --no-daemon --stacktrace
 
       # 上传 universal 和 arm64-v8a 两种，真机安装二选一即可
       - name: Upload APK
