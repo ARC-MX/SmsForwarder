@@ -3,7 +3,9 @@ package cn.ppps.forwarder.receiver
 import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.provider.Telephony
+import android.telephony.SmsMessage
 import androidx.work.OneTimeWorkRequestBuilder
 import androidx.work.WorkManager
 import androidx.work.workDataOf
@@ -55,9 +57,27 @@ class SmsReceiver : BroadcastReceiver() {
                 from = intent.getStringExtra("address") ?: ""
                 Log.d(TAG, "from = $from, msg = $msg")
             } else {
-                for (smsMessage in Telephony.Sms.Intents.getMessagesFromIntent(intent)) {
-                    from = smsMessage.displayOriginatingAddress
-                    msg += smsMessage.messageBody
+                // 修复 Android 16/17 上解析 106 服务号含 UDH 的拼接长短信失败问题：
+                // 系统内部 SmsMessage.getGroupIdLevel1() 会抛异常，导致 getMessagesFromIntent()
+                // 整条消息解析失败、短信无法转发。这里改为逐条 PDU 解析并单独 try-catch，
+                // 单条解析失败不影响其它分段，避免整条短信被丢弃。
+                val format = intent.getStringExtra("format")
+                val pdus = intent.getSerializableExtra("pdus") as? Array<*>
+                    ?: intent.getSerializableExtra("messages") as? Array<*>
+                if (pdus != null) {
+                    for (pdu in pdus) {
+                        try {
+                            val smsMessage = if (format != null && Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+                                SmsMessage.createFromPdu(pdu as ByteArray, format)
+                            } else {
+                                SmsMessage.createFromPdu(pdu as ByteArray)
+                            }
+                            from = smsMessage.displayOriginatingAddress
+                            msg += smsMessage.messageBody
+                        } catch (e: Exception) {
+                            Log.e(TAG, "Failed to parse one SMS PDU: ${e.message}")
+                        }
+                    }
                 }
             }
             Log.d(TAG, "from = $from, msg = $msg")
