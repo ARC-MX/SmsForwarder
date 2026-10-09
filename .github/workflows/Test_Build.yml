@@ -35,17 +35,19 @@ jobs:
           printf "storeFile=$(pwd)/keystore/test.jks\nkeyAlias=testkey\nkeyPassword=test123456\nstorePassword=test123456\n" > keystore/keystore.properties
           cat keystore/keystore.properties
 
-      # runner 预装的 SDK 只有 android-34+，本项目需要 android-33 和 build-tools 33.0.1，
-      # 这里用 sdkmanager 补齐（先接受许可，再安装缺失组件）。
-      - name: Install Android SDK components
+      # runner 预装的 SDK 只有 android-34+，本项目 compileSdk=33 且 buildToolsVersion=33.0.1，
+      # 用官方 action 补齐 cmdline-tools 与所需组件（它会自动接受许可并加入 PATH）。
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v4.0.4
+        with:
+          packages: 'platform-tools platforms;android-33 build-tools;33.0.1'
+          accept-android-sdk-licenses: true
+
+      # 打印已安装组件，便于确认 android-33 / 33.0.1 就位
+      - name: Verify Android SDK components
         run: |
-          SDKMANAGER="${ANDROID_SDK_ROOT}/cmdline-tools/latest/bin/sdkmanager"
-          if [ ! -x "$SDKMANAGER" ]; then
-            SDKMANAGER=$(find "${ANDROID_SDK_ROOT}/cmdline-tools" -name sdkmanager -type f 2>/dev/null | sort | tail -1)
-          fi
-          echo "sdkmanager = $SDKMANAGER"
-          yes | "$SDKMANAGER" --licenses > /dev/null 2>&1 || true
-          "$SDKMANAGER" "platforms;android-33" "build-tools;33.0.1"
+          echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT"
+          sdkmanager --list_installed 2>&1 | grep -E "platforms;android-33|build-tools;33.0.1" || echo "!! 未找到 android-33 / 33.0.1"
 
       # 编 debug 包（debuggable，方便用 logcat 抓日志；isNeedPackage=true 时 debug 也会走 release 签名配置）
       - name: Build debug APK
