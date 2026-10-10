@@ -5,6 +5,10 @@ on:
   workflow_dispatch:
   push:
 
+# 发布 Release 需要写权限
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: ubuntu-latest
@@ -42,7 +46,6 @@ jobs:
           set +e
           SDK="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
           echo "ANDROID_SDK_ROOT=$ANDROID_SDK_ROOT ANDROID_HOME=$ANDROID_HOME"
-          echo "SDK dir: $SDK"
           ls -la "$SDK" || true
           SDKMGR=$(find "$SDK" -name sdkmanager -type f 2>/dev/null | head -1)
           echo "sdkmanager=$SDKMGR"
@@ -63,7 +66,7 @@ jobs:
           code=$?
           echo "gradle_exit=$code"
           echo "=========== 关键错误行 ==========="
-          grep -nE "^e: |error:|FAILURE:|What went wrong|Could not (resolve|find|determine|download|install)|Caused by|> Task .* FAILED|Execution failed|Failed to install|SDK " /tmp/build.log | head -30
+          grep -nE "^e: |error:|FAILURE:|What went wrong|Could not (resolve|find|determine|download|install)|Caused by|> Task .* FAILED|Execution failed|Failed to install" /tmp/build.log | head -30
           echo "=========== 日志末尾 ==========="
           tail -50 /tmp/build.log
           grep -E "^e: |error:|FAILURE:|What went wrong|Could not (resolve|find|determine|download|install)|Caused by|> Task .* FAILED|Execution failed|Failed to install" /tmp/build.log \
@@ -73,7 +76,7 @@ jobs:
               done
           exit $code
 
-      # 上传 universal 和 arm64-v8a 两种，真机安装二选一即可
+      # 上传 artifact（run 页面可下载）
       - name: Upload APK
         if: hashFiles('build/app/outputs/apk/debug/*.apk') != ''
         uses: actions/upload-artifact@v4
@@ -82,3 +85,26 @@ jobs:
           path: |
             build/app/outputs/apk/debug/*universal*_debug.apk
             build/app/outputs/apk/debug/*arm64-v8a*_debug.apk
+
+      # 发布 Release：public 仓库的 release 资源无需登录即可下载。
+      # 固定 tag + --clobber，保证下载地址稳定、始终是最新一次构建。
+      - name: Publish APK to Release
+        if: hashFiles('build/app/outputs/apk/debug/*.apk') != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -e
+          TAG="test-build-latest"
+          APKS=$(ls build/app/outputs/apk/debug/*universal*_debug.apk build/app/outputs/apk/debug/*arm64-v8a*_debug.apk)
+          echo "APKS:"; echo "$APKS"
+          if gh release view "$TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" $APKS --repo "$GITHUB_REPOSITORY" --clobber
+          else
+            gh release create "$TAG" $APKS \
+              --repo "$GITHUB_REPOSITORY" \
+              --title "Test Build (SmsReceiver fix)" \
+              --notes "自动构建的测试包，用于验证 #773（Android 16/17 上 106 服务号含 UDH 长短信解析失败）。
+          自签名（非官方签名），安装前请先卸载官方版本。commit: ${GITHUB_SHA}" \
+              --prerelease
+          fi
+          gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json assets --jq '.assets[] | "\(.name)  \(.size) bytes"'
